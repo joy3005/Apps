@@ -21,6 +21,10 @@ class _ReportPageState extends State<ReportPage> {
   double _totalMorning = 0;
   double _totalEvening = 0;
 
+  // THEME COLORS
+  final Color _morningColor = Colors.orange;
+  final Color _eveningColor = Colors.blue;
+
   @override
   void initState() {
     super.initState();
@@ -55,7 +59,15 @@ class _ReportPageState extends State<ReportPage> {
         : "Monthly Report (30 Days)";
 
     return Scaffold(
-      appBar: AppBar(title: Text(title)),
+      // 1. FARM THEME BACKGROUND
+      backgroundColor: Colors.green[50],
+      appBar: AppBar(
+        title: Text(title),
+        // 2. FARM THEME APP BAR
+        backgroundColor: Colors.green[800],
+        foregroundColor: Colors.white,
+        centerTitle: true,
+      ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
@@ -88,17 +100,42 @@ class _ReportPageState extends State<ReportPage> {
           children: [
             Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: AppTheme.emeraldGreen,
+                // 3. FARM THEME TEXT
+                color: Colors.green[800],
               ),
             ),
+            const SizedBox(height: 10),
+            // LEGEND FOR CLARITY
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _buildLegendItem("Morning", _morningColor),
+                const SizedBox(width: 20),
+                _buildLegendItem("Evening", _eveningColor),
+              ],
+            ),
             const SizedBox(height: 20),
-            SizedBox(height: 250, child: chart), // Fixed height for charts
+            SizedBox(height: 250, child: chart),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildLegendItem(String label, Color color) {
+    return Row(
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+      ],
     );
   }
 
@@ -113,7 +150,7 @@ class _ReportPageState extends State<ReportPage> {
           PieChartSectionData(
             value: _totalMorning,
             title: "${_totalMorning.toStringAsFixed(1)} L",
-            color: Colors.orangeAccent,
+            color: _morningColor, // Orange
             radius: 50,
             titleStyle: const TextStyle(
               fontWeight: FontWeight.bold,
@@ -123,8 +160,8 @@ class _ReportPageState extends State<ReportPage> {
           PieChartSectionData(
             value: _totalEvening,
             title: "${_totalEvening.toStringAsFixed(1)} L",
-            color: AppTheme.emeraldGreen,
-            radius: 60, // Make one slightly larger for style
+            color: _eveningColor, // Blue
+            radius: 60,
             titleStyle: const TextStyle(
               fontWeight: FontWeight.bold,
               color: Colors.white,
@@ -141,8 +178,6 @@ class _ReportPageState extends State<ReportPage> {
   Widget _buildBarChart() {
     if (_data.isEmpty) return const Center(child: Text("No Data"));
 
-    // We need to group data by DATE.
-    // Map key: "2025-10-10", Value: {morning: 10, evening: 12}
     Map<String, Map<String, double>> grouped = {};
 
     for (var row in _data) {
@@ -170,14 +205,16 @@ class _ReportPageState extends State<ReportPage> {
             // Morning Bar
             BarChartRodData(
               toY: values['morning']!,
-              color: Colors.orangeAccent,
+              color: _morningColor, // Orange
               width: 12,
+              borderRadius: BorderRadius.circular(4),
             ),
             // Evening Bar
             BarChartRodData(
               toY: values['evening']!,
-              color: AppTheme.emeraldGreen,
+              color: _eveningColor, // Blue
               width: 12,
+              borderRadius: BorderRadius.circular(4),
             ),
           ],
         ),
@@ -194,9 +231,7 @@ class _ReportPageState extends State<ReportPage> {
           leftTitles: AxisTitles(
             sideTitles: SideTitles(showTitles: true, reservedSize: 40),
           ),
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
-          ), // Hide dates to avoid clutter
+          bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
           topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
           rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
         ),

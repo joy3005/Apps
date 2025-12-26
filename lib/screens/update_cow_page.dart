@@ -1,11 +1,11 @@
-import 'dart:io'; // Needed for FileImage
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:jeyam_dairy/database_helper.dart';
 import 'package:jeyam_dairy/theme.dart';
 import 'package:intl/intl.dart';
 
-// 1. THE SCANNER PAGE (Entry Point) - No Changes Here
+// 1. THE SCANNER PAGE (Updated with Custom Image Animation)
 class UpdateCowScanPage extends StatefulWidget {
   const UpdateCowScanPage({super.key});
 
@@ -13,13 +13,20 @@ class UpdateCowScanPage extends StatefulWidget {
   State<UpdateCowScanPage> createState() => _UpdateCowScanPageState();
 }
 
-class _UpdateCowScanPageState extends State<UpdateCowScanPage> {
+class _UpdateCowScanPageState extends State<UpdateCowScanPage>
+    with SingleTickerProviderStateMixin {
   final FocusNode _focusNode = FocusNode();
   String _buffer = "";
+  late AnimationController _pulseController;
 
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2), // Slower breathing
+    )..repeat(reverse: true);
+
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _focusNode.requestFocus(),
     );
@@ -28,6 +35,7 @@ class _UpdateCowScanPageState extends State<UpdateCowScanPage> {
   @override
   void dispose() {
     _focusNode.dispose();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -69,24 +77,60 @@ class _UpdateCowScanPageState extends State<UpdateCowScanPage> {
       autofocus: true,
       onKeyEvent: _handleKey,
       child: Scaffold(
-        appBar: AppBar(title: const Text("Scan Cow to Update")),
+        backgroundColor: Colors.green[50],
+        appBar: AppBar(
+          title: const Text("Scan Cow to Update"),
+          backgroundColor: Colors.green[800],
+          foregroundColor: Colors.white,
+        ),
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: const [
-              Icon(
-                Icons.qr_code_scanner,
-                size: 100,
-                color: AppTheme.emeraldGreen,
+            children: [
+              // ANIMATED HOME IMAGE
+              ScaleTransition(
+                scale: Tween(begin: 1.0, end: 1.05).animate(
+                  CurvedAnimation(
+                    parent: _pulseController,
+                    curve: Curves.easeInOut,
+                  ),
+                ),
+                child: Container(
+                  width: 200, // Slightly larger for this screen
+                  height: 200,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.green.withOpacity(0.2),
+                        blurRadius: 30,
+                        spreadRadius: 5,
+                      ),
+                    ],
+                  ),
+                  // THE NEW IMAGE
+                  child: ClipOval(
+                    child: Image.asset(
+                      'assets/Home_Image.png',
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                ),
               ),
-              SizedBox(height: 20),
+              const SizedBox(height: 40),
               Text(
                 "Scan RFID Tag Now",
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.green[900],
+                ),
               ),
+              const SizedBox(height: 10),
               Text(
-                "Use keyboard to type ID + Enter for Simulator",
-                style: TextStyle(color: Colors.grey),
+                "Waiting for input...",
+                style: TextStyle(color: Colors.grey[600]),
               ),
             ],
           ),
@@ -96,7 +140,7 @@ class _UpdateCowScanPageState extends State<UpdateCowScanPage> {
   }
 }
 
-// 2. THE EDIT FORM (With Image)
+// 2. THE EDIT FORM (UNCHANGED)
 class EditCowForm extends StatefulWidget {
   final Map<String, dynamic> cowData;
   const EditCowForm({super.key, required this.cowData});
@@ -152,18 +196,21 @@ class _EditCowFormState extends State<EditCowForm> {
     String? imagePath = c['CowPicturePath'];
 
     return Scaffold(
-      appBar: AppBar(title: Text("Update Cow #${c['RFID']}")),
+      backgroundColor: Colors.green[50],
+      appBar: AppBar(
+        title: Text("Update Cow #${c['RFID']}"),
+        backgroundColor: Colors.green[800],
+        foregroundColor: Colors.white,
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Form(
           key: _formKey,
           child: Column(
             children: [
-              // 1. COW IMAGE (New)
               _buildCowImage(imagePath),
               const SizedBox(height: 20),
 
-              // 2. READ ONLY FIELDS
               _buildReadOnlyCard("Cow Identity", [
                 "Cow ID: ${c['CowID']}",
                 "RFID Tag: ${c['RFID']}",
@@ -171,22 +218,25 @@ class _EditCowFormState extends State<EditCowForm> {
               ]),
               const SizedBox(height: 15),
 
-              // 3. EDITABLE FIELDS
               Card(
+                elevation: 4,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         "Update Information",
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
-                          color: AppTheme.emeraldGreen,
-                          fontSize: 16,
+                          color: Colors.green[800],
+                          fontSize: 18,
                         ),
                       ),
-                      const Divider(),
+                      Divider(color: Colors.green[200]),
                       const SizedBox(height: 10),
                       _buildDateField("Calf Birth Date", _calfBirthDate),
                       const SizedBox(height: 10),
@@ -228,7 +278,6 @@ class _EditCowFormState extends State<EditCowForm> {
               ),
 
               const SizedBox(height: 20),
-              // 4. BUTTONS
               Row(
                 children: [
                   Expanded(
@@ -236,6 +285,8 @@ class _EditCowFormState extends State<EditCowForm> {
                       onPressed: () => Navigator.pop(context),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 16),
+                        side: BorderSide(color: Colors.green[800]!),
+                        foregroundColor: Colors.green[800],
                       ),
                       child: const Text("CANCEL"),
                     ),
@@ -245,7 +296,7 @@ class _EditCowFormState extends State<EditCowForm> {
                     child: ElevatedButton(
                       onPressed: _update,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.emeraldGreen,
+                        backgroundColor: Colors.green[700],
                         padding: const EdgeInsets.symmetric(vertical: 16),
                       ),
                       child: const Text("UPDATE"),
@@ -260,35 +311,37 @@ class _EditCowFormState extends State<EditCowForm> {
     );
   }
 
-  // --- NEW HELPER FOR IMAGE ---
   Widget _buildCowImage(String? path) {
     bool hasValidImage =
         path != null && path.isNotEmpty && File(path).existsSync();
-
     return Container(
       width: 150,
       height: 150,
       decoration: BoxDecoration(
-        color: Colors.grey[200],
+        color: Colors.white,
         shape: BoxShape.circle,
-        border: Border.all(color: AppTheme.emeraldGreen, width: 3),
+        border: Border.all(color: Colors.green[700]!, width: 4),
         image: hasValidImage
             ? DecorationImage(image: FileImage(File(path)), fit: BoxFit.cover)
             : null,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 10,
+            offset: Offset(0, 5),
+          ),
+        ],
       ),
       child: hasValidImage
           ? null
-          : const Icon(
-              Icons.cruelty_free,
-              size: 60,
-              color: Colors.grey,
-            ), // Placeholder icon
+          : const Icon(Icons.cruelty_free, size: 60, color: Colors.grey),
     );
   }
 
   Widget _buildReadOnlyCard(String title, List<String> lines) {
     return Card(
-      color: AppTheme.softGray, // Using theme color
+      color: Colors.green[50],
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(16),
@@ -297,12 +350,13 @@ class _EditCowFormState extends State<EditCowForm> {
           children: [
             Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontWeight: FontWeight.bold,
-                color: AppTheme.emeraldGreen,
+                color: Colors.green[800],
+                fontSize: 16,
               ),
             ),
-            const Divider(),
+            Divider(color: Colors.green[200]),
             ...lines.map(
               (l) => Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4.0),

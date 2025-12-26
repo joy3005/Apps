@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert'; // For utf8 decoding
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart'; // NEW BLE PACKAGE
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:jeyam_dairy/theme.dart';
@@ -28,8 +28,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   // Stabilization Logic
   double? _lastWeightReading;
   int _stableReadingsCount = 0;
-  static const int _requiredStableReadings =
-      5; // Needs 5 consistent packets to save
+  static const int _requiredStableReadings = 5;
 
   // --- BLE VARIABLES ---
   BluetoothDevice? _connectedDevice;
@@ -39,17 +38,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _isScanning = false;
   String _bleStatus = "Initializing...";
 
-  // --- UI TIMER ANIMATION ---
+  // --- UI ANIMATION CONTROLLERS ---
   late AnimationController _timerController;
-
-  // The exact name you provided
-  final String _targetDeviceName = "RS232\\485";
+  late AnimationController _pulseController;
 
   @override
   void initState() {
     super.initState();
 
-    // 60 Second Countdown Controller
     _timerController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 60),
@@ -61,6 +57,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       }
     });
 
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2), // Slower, deeper breath
+    )..repeat(reverse: true);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _keyboardFocusNode.requestFocus();
       _initBLE();
@@ -71,100 +72,70 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   void dispose() {
     _keyboardFocusNode.dispose();
     _timerController.dispose();
+    _pulseController.dispose();
     _scanSubscription?.cancel();
     _valueSubscription?.cancel();
-    // We disconnect to be clean, though for industrial apps keeping it open is okay
     _connectedDevice?.disconnect();
     super.dispose();
   }
 
-  // --- 1. BLE AUTO-CONNECT LOGIC ---
+  // --- BLE & LOGIC METHODS ---
   Future<void> _initBLE() async {
-    // 1. Request Permissions
     await [
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
       Permission.location,
     ].request();
 
-    // 2. Listener for connection state changes
-    // CHANGED: Use 'FlutterBluePlus.adapterState' directly for V2.x
     FlutterBluePlus.adapterState.listen((state) {
       if (state == BluetoothAdapterState.on) {
         _startScan();
       } else {
-        if (mounted) {
-          setState(() => _bleStatus = "Bluetooth OFF");
-        }
+        if (mounted) setState(() => _bleStatus = "Bluetooth OFF");
       }
     });
   }
 
   void _startScan() async {
-    // If already connected or scanning, skip
     if (_connectedDevice != null || _isScanning) return;
-
     if (mounted) {
       setState(() {
         _isScanning = true;
         _bleStatus = "Scanning for Scale...";
       });
     }
-
     try {
-      // Start scanning (15s timeout)
       await FlutterBluePlus.startScan(timeout: const Duration(seconds: 15));
-
       _scanSubscription = FlutterBluePlus.scanResults.listen((results) async {
         for (ScanResult r in results) {
-          // 1. EXACT RAW STRING MATCH (Verified Working)
-          // The 'r' prefix tells Dart to ignore the backslash escape
           bool nameMatch = (r.device.platformName == r'RS232\485');
-
-          // 2. FALLBACK (Check Local Name if Platform Name is empty)
           if (!nameMatch) {
             nameMatch = (r.advertisementData.localName == r'RS232\485');
           }
-
           if (nameMatch) {
-            print(">>> FOUND SCALE: ${r.device.platformName} <<<");
-
-            // CRITICAL STEP: Stop scanning before connecting
             await FlutterBluePlus.stopScan();
-
             _connectToDevice(r.device);
-            break; // Stop loop immediately
+            break;
           }
         }
       });
     } catch (e) {
-      print("Scan Error: $e");
-      if (mounted) setState(() => _bleStatus = "Scan Error: Check Permissions");
+      if (mounted) setState(() => _bleStatus = "Scan Error");
     }
   }
 
   Future<void> _connectToDevice(BluetoothDevice device) async {
     try {
       if (mounted) setState(() => _bleStatus = "Connecting...");
-
-      // CRITICAL: Use License.free for v2.0+
-      // Using autoConnect: false is usually faster for direct connections
       await device.connect(autoConnect: false, license: License.free);
-
       if (!mounted) return;
-
       setState(() {
         _connectedDevice = device;
         _bleStatus = "Connected to Scale";
         _isScanning = false;
       });
-
-      // Discover Services
       List<BluetoothService> services = await device.discoverServices();
-
       BluetoothCharacteristic? targetChar;
-
-      // PRIORITY SEARCH: Look for standard Serial Service (FFE0/FFE1)
       for (BluetoothService service in services) {
         if (service.uuid.toString().toLowerCase().contains("ffe0")) {
           for (BluetoothCharacteristic c in service.characteristics) {
@@ -175,8 +146,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           }
         }
       }
-
-      // FALLBACK SEARCH: If FFE1 not found, grab the first Notify/Indicate char
       if (targetChar == null) {
         for (BluetoothService service in services) {
           for (BluetoothCharacteristic c in service.characteristics) {
@@ -188,101 +157,50 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           if (targetChar != null) break;
         }
       }
-
       if (targetChar != null) {
         _notifyCharacteristic = targetChar;
         await targetChar.setNotifyValue(true);
         _valueSubscription = targetChar.lastValueStream.listen(
           _onBleDataReceived,
         );
-        print(">>> DATA STREAM ACTIVE <<<");
-      } else {
-        print("Error: No Data Characteristic Found");
       }
     } catch (e) {
-      print("Connection Failed: $e");
       if (!mounted) return;
-      setState(() => _bleStatus = "Connection Failed. Retrying...");
+      setState(() => _bleStatus = "Retrying Connection...");
       _connectedDevice = null;
       _isScanning = false;
-
-      // Retry Scan after 2 seconds
       Future.delayed(const Duration(seconds: 2), _startScan);
     }
   }
 
-  // --- 2. DATA PROCESSING & STABILIZATION LOGIC ---
   void _onBleDataReceived(List<int> rawData) {
-    // 1. LOGIC GATE: If no cow is scanned, ignore everything immediately.
-    // This prevents recording random weights or wasting battery.
     if (_currentCowData == null) return;
-
-    // 2. DECODE DATA
-    // We clean the string to remove "ST,GS,+" or "kg" characters
     String ascii = utf8.decode(rawData).trim();
     String clean = ascii.replaceAll(RegExp(r'[^\d.]'), '');
-
-    // Safety check for empty strings or bad packets
     if (clean.isEmpty) return;
-
     double? currentWeight = double.tryParse(clean);
 
-    // 3. STABILIZATION LOGIC
     if (currentWeight != null && currentWeight > 0.0) {
-      // If we have a previous reading to compare against
       if (_lastWeightReading != null) {
-        // Calculate the difference between this reading and the last one
         double difference = (currentWeight - _lastWeightReading!).abs();
-
-        // CHECK TOLERANCE (0.1 kg)
-        // If the weight is effectively the same as the last packet...
         if (difference <= 0.1) {
           _stableReadingsCount++;
-
-          // Debug log to verify it's working in the console
-          print(
-            "Stable Count: $_stableReadingsCount / $_requiredStableReadings (Weight: $currentWeight)",
-          );
-
-          // SUCCESS CONDITION: We reached your target (5)
+          setState(() {});
           if (_stableReadingsCount >= _requiredStableReadings) {
             _saveMilkEntry(currentWeight);
           }
         } else {
-          // UNSTABLE: Weight changed significantly! Reset the counter.
-          // This happens when milk is being poured or the cow is moving.
-          print(
-            "Unstable! Resetting count. (Old: $_lastWeightReading, New: $currentWeight)",
-          );
           _stableReadingsCount = 0;
           _lastWeightReading = currentWeight;
+          setState(() {});
         }
       } else {
-        // This is the very first reading of the session
         _lastWeightReading = currentWeight;
         _stableReadingsCount = 0;
       }
     }
   }
 
-  void _checkStability(double weight) {
-    // If this is the first reading, or different from last reading
-    if (_lastWeightReading == null ||
-        (weight - _lastWeightReading!).abs() > 0.05) {
-      _lastWeightReading = weight;
-      _stableReadingsCount = 0; // Reset counter, weight is changing
-    } else {
-      // Weight is consistent!
-      _stableReadingsCount++;
-    }
-
-    // If we have N stable readings in a row, we accept it
-    if (_stableReadingsCount >= _requiredStableReadings) {
-      _saveMilkEntry(_lastWeightReading!);
-    }
-  }
-
-  // --- 3. COW SCAN LOGIC ---
   void _handleKey(KeyEvent event) {
     if (event is KeyDownEvent) {
       final String? char = event.character;
@@ -300,15 +218,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _processCowScan(String rfid) async {
-    _resetLogic(fullReset: false); // Clear previous cow data
-
+    _resetLogic(fullReset: false);
     final cowData = await DatabaseHelper.instance.getCowByRFID(rfid);
 
     if (cowData != null) {
       setState(() {
         _currentCowData = cowData;
       });
-      // START THE 60s TIMER
       _timerController.forward(from: 0.0);
     } else {
       _showError("Unknown Tag: $rfid");
@@ -321,21 +237,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _saveMilkEntry(double weight) async {
-    // 1. PREVENT DOUBLE SAVES
-    // If the gate is already closed (null), stop immediately.
     if (_currentCowData == null) return;
-
-    // 2. STOP UI TIMER
     _timerController.stop();
 
-    // 3. CAPTURE DATA LOCALLY
-    // We grab the ID and Cycle NOW, because we are about to wipe _currentCowData
     int cowId = _currentCowData!['CowID'];
     int cycle = _currentCowData!['CurrentMilkingCycle'];
 
-    // 4. CLOSE THE GATE IMMEDIATELY (The Critical Change)
-    // By setting _currentCowData to null NOW, we ensure that any
-    // new data coming from the scale in the next few milliseconds is IGNORED.
     setState(() {
       _currentCowData = null;
       _timerController.reset();
@@ -343,16 +250,15 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       _lastWeightReading = null;
     });
 
-    // 5. DATABASE OPERATIONS
     final now = DateTime.now();
     final hour = now.hour;
     String session = (hour < 12) ? "Morning" : "Evening";
 
     Map<String, dynamic> milkRow = {
-      'CowID': cowId, // Use the local variable we captured
+      'CowID': cowId,
       'Date': DateFormat('yyyy-MM-dd').format(now),
       'Time': session,
-      'CycleNumber': cycle, // Use the local variable
+      'CycleNumber': cycle,
       'MorningMilk': (session == "Morning") ? weight : 0,
       'EveningMilk': (session == "Evening") ? weight : 0,
       'TotalMilk': weight,
@@ -361,34 +267,37 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
     await DatabaseHelper.instance.insertMilkRecord(milkRow);
 
-    // 6. UI FEEDBACK
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("SAVED: $weight Liters"),
-          backgroundColor: AppTheme.emeraldGreen,
-          duration: const Duration(seconds: 2),
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white),
+              const SizedBox(width: 10),
+              Text(
+                "SAVED: $weight Liters",
+                style: const TextStyle(fontSize: 16),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.green[700],
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          duration: const Duration(seconds: 3),
         ),
       );
     }
-
-    // 7. READY FOR NEXT COW
-    // Ensure keyboard is focused so you can scan the next RFID immediately
     _keyboardFocusNode.requestFocus();
   }
 
   void _resetLogic({required bool fullReset}) {
     _timerController.stop();
     _timerController.reset();
-
     _lastWeightReading = null;
     _stableReadingsCount = 0;
-
-    if (fullReset) {
-      setState(() {
-        _currentCowData = null;
-      });
-    }
+    if (fullReset) setState(() => _currentCowData = null);
     _keyboardFocusNode.requestFocus();
   }
 
@@ -398,7 +307,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  // --- UI BUILD ---
+  // --- UI ---
   @override
   Widget build(BuildContext context) {
     bool isCowActive = _currentCowData != null;
@@ -408,168 +317,270 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       autofocus: true,
       onKeyEvent: _handleKey,
       child: Scaffold(
+        backgroundColor: Colors.green[50],
         appBar: AppBar(
-          title: const Text("Jeyam Dairy Farms"),
+          title: const Text(
+            "Jeyam Dairy Farms",
+            style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.0),
+          ),
           centerTitle: true,
-          // Removed Actions (No Bluetooth/Keyboard buttons)
+          elevation: 0,
+          backgroundColor: Colors.green[800],
+          foregroundColor: Colors.white,
         ),
-        body: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            children: [
-              _buildTopButtons(),
-              const SizedBox(height: 15),
-
-              // EXPANDED SECTION WITH ANIMATED BACKGROUND
-              Expanded(
-                child: Stack(
-                  children: [
-                    // 1. The Background Timer Fill
-                    if (isCowActive)
-                      Positioned.fill(
-                        child: AnimatedBuilder(
-                          animation: _timerController,
-                          builder: (context, child) {
-                            return FractionallySizedBox(
-                              alignment: Alignment.bottomCenter,
-                              heightFactor:
-                                  1.0 - _timerController.value, // Drains down
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: AppTheme.emeraldGreen.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-
-                    // 2. The Card Content
-                    _buildLiveStatusCard(isCowActive),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 15),
-              _buildReportButtons(),
-              const SizedBox(height: 10),
-              _buildSyncButton(),
-            ],
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildActionGrid(),
+                const SizedBox(height: 24),
+                Expanded(child: _buildMainStatusCard(isCowActive)),
+                const SizedBox(height: 24),
+                _buildReportButtons(),
+                const SizedBox(height: 16),
+                _buildSyncButton(),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildLiveStatusCard(bool isCowActive) {
-    return Card(
-      elevation: 6,
-      color: Colors.white.withOpacity(0.9), // Slightly transparent for effect
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // DYNAMIC ICON
-            Icon(
-              isCowActive ? Icons.scale : Icons.sensors,
-              size: 80,
-              color: isCowActive ? AppTheme.emeraldGreen : Colors.grey,
-            ),
-            const SizedBox(height: 20),
-
-            // MAIN STATUS TEXT
-            Text(
-              isCowActive
-                  ? "Cow #${_currentCowData!['RFID']}"
-                  : "Ready to Scan",
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: isCowActive ? AppTheme.darkText : Colors.grey,
-              ),
-              textAlign: TextAlign.center,
-            ),
-
-            const SizedBox(height: 10),
-
-            // SUB STATUS / TIMER
-            if (isCowActive) ...[
-              Text(
-                "Waiting for Weigh Machine...",
-                style: const TextStyle(fontSize: 18, color: Colors.grey),
-              ),
-              const SizedBox(height: 20),
-              // Digital Timer Countdown
-              AnimatedBuilder(
-                animation: _timerController,
-                builder: (context, child) {
-                  int remaining = 60 - (_timerController.value * 60).toInt();
-                  return Text(
-                    "$remaining s",
-                    style: const TextStyle(
-                      fontSize: 40,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.redAccent,
-                    ),
-                  );
-                },
-              ),
-            ] else ...[
-              Text(
-                _bleStatus, // "Searching..." or "Connected"
-                style: TextStyle(
-                  fontSize: 16,
-                  color: _bleStatus.contains("Connected")
-                      ? Colors.green
-                      : Colors.orange,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  // --- UNCHANGED WIDGETS ---
-  Widget _buildTopButtons() {
+  Widget _buildActionGrid() {
     return Row(
       children: [
         Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () => Navigator.push(
+          child: _buildHeaderBtn(
+            icon: Icons.add_circle_outline,
+            label: "Add Cow",
+            color: Colors.green[700]!,
+            onTap: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const AddCowPage()),
             ),
-            icon: const Icon(Icons.add),
-            label: const Text("Add New Cow"),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-            ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 16),
         Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () => Navigator.push(
+          child: _buildHeaderBtn(
+            icon: Icons.qr_code_scanner,
+            label: "Update",
+            color: Colors.blue[700]!,
+            onTap: () => Navigator.push(
               context,
               MaterialPageRoute(
                 builder: (context) => const UpdateCowScanPage(),
               ),
             ),
-            icon: const Icon(Icons.edit, color: AppTheme.emeraldGreen),
-            label: const Text(
-              "Update Cow",
-              style: TextStyle(color: AppTheme.emeraldGreen),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHeaderBtn({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.white,
+      elevation: 2,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(
+            children: [
+              Icon(icon, color: color, size: 28),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  color: Colors.grey[800],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMainStatusCard(bool isCowActive) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.green[100]!, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.green.withOpacity(0.1),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (isCowActive) _buildActiveCowUI() else _buildIdleUI(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- IDLE STATE: PULSING HOME IMAGE ---
+  Widget _buildIdleUI() {
+    bool isConnected = _bleStatus.contains("Connected");
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ScaleTransition(
+          scale: Tween(begin: 1.0, end: 1.05).animate(
+            // Subtle breathing
+            CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+          ),
+          child: Container(
+            width: 180, // Adjust size as needed
+            height: 180,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isConnected ? Colors.green[50] : Colors.orange[50],
+              boxShadow: [
+                BoxShadow(
+                  color: isConnected
+                      ? Colors.green.withOpacity(0.2)
+                      : Colors.orange.withOpacity(0.2),
+                  blurRadius: 30,
+                  spreadRadius: 5,
+                ),
+              ],
             ),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              side: const BorderSide(color: AppTheme.emeraldGreen, width: 2),
+            // THE NEW IMAGE LOGIC
+            child: ClipOval(
+              child: Image.asset(
+                'assets/Home_Image.png', // <--- YOUR NEW IMAGE
+                fit: BoxFit.cover, // Fills the circle nicely
+              ),
             ),
+          ),
+        ),
+        const SizedBox(height: 30),
+        Text(
+          "Ready to Scan",
+          style: TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.bold,
+            color: Colors.green[900],
+          ),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: isConnected
+                ? Colors.green.withOpacity(0.1)
+                : Colors.orange.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                isConnected
+                    ? Icons.bluetooth_connected
+                    : Icons.bluetooth_searching,
+                size: 16,
+                color: isConnected ? Colors.green : Colors.orange,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _bleStatus,
+                style: TextStyle(
+                  color: isConnected ? Colors.green[700] : Colors.orange[800],
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // --- ACTIVE STATE (UNCHANGED) ---
+  Widget _buildActiveCowUI() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          "Cow #${_currentCowData!['RFID']}",
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+            color: Colors.green[900],
+          ),
+        ),
+        const SizedBox(height: 30),
+        Icon(Icons.scale, size: 80, color: Colors.green[700]),
+        const SizedBox(height: 30),
+        AnimatedBuilder(
+          animation: _timerController,
+          builder: (context, child) {
+            return Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      "Weighing Window",
+                      style: TextStyle(color: Colors.grey[600]),
+                    ),
+                    Text(
+                      "${(60 - (_timerController.value * 60)).toInt()}s",
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.redAccent,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value: 1.0 - _timerController.value,
+                  backgroundColor: Colors.grey[200],
+                  color: Colors.green[600],
+                  minHeight: 10,
+                  borderRadius: BorderRadius.circular(5),
+                ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 20),
+        Text(
+          _lastWeightReading != null
+              ? "${_lastWeightReading!.toStringAsFixed(2)} kg"
+              : "--.-- kg",
+          style: TextStyle(
+            fontSize: 40,
+            fontWeight: FontWeight.bold,
+            color: Colors.green[800],
           ),
         ),
       ],
@@ -580,41 +591,46 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     return Row(
       children: [
         Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () => Navigator.push(
+          child: _buildFooterBtn(
+            "Weekly Report",
+            Icons.calendar_view_week,
+            () => Navigator.push(
               context,
               MaterialPageRoute(
                 builder: (context) => const ReportPage(isWeekly: true),
               ),
             ),
-            icon: const Icon(Icons.calendar_view_week),
-            label: const Text("Weekly Report"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: AppTheme.darkText,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-            ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 16),
         Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () => Navigator.push(
+          child: _buildFooterBtn(
+            "Monthly Report",
+            Icons.calendar_month,
+            () => Navigator.push(
               context,
               MaterialPageRoute(
                 builder: (context) => const ReportPage(isWeekly: false),
               ),
             ),
-            icon: const Icon(Icons.calendar_month),
-            label: const Text("Monthly Report"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: AppTheme.darkText,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-            ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildFooterBtn(String label, IconData icon, VoidCallback onTap) {
+    return ElevatedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 18),
+      label: Text(label),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.green[800],
+        elevation: 1,
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
     );
   }
 
@@ -623,25 +639,73 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       width: double.infinity,
       child: ElevatedButton.icon(
         onPressed: () async {
+          // 1. LOADING DIALOG (Farm Theme)
           showDialog(
             context: context,
             barrierDismissible: false,
-            builder: (ctx) => const Center(child: CircularProgressIndicator()),
+            builder: (ctx) => Center(
+              child: CircularProgressIndicator(
+                color: Colors.green[800], // Farm Green Spinner
+              ),
+            ),
           );
+
           String result = await SyncService.syncToCloud();
+
           if (mounted) {
-            Navigator.pop(context);
+            Navigator.pop(context); // Close Loading
+
+            // 2. SUCCESS/ERROR POPUP (Farm Theme)
             showDialog(
               context: context,
               builder: (ctx) => AlertDialog(
-                title: Text(
-                  result == "Success" ? "Sync Complete" : "Sync Failed",
+                backgroundColor: Colors.green[50], // Farm Background
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: BorderSide(color: Colors.green[200]!, width: 2),
                 ),
-                content: Text(result),
+                title: Row(
+                  children: [
+                    Icon(
+                      result == "Success" ? Icons.check_circle : Icons.error,
+                      color: result == "Success"
+                          ? Colors.green[700]
+                          : Colors.red,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      result == "Success" ? "Sync Complete" : "Sync Failed",
+                      style: TextStyle(
+                        color: Colors.green[900],
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                content: Text(
+                  result == "Success"
+                      ? "All farm data has been successfully uploaded to the cloud."
+                      : result,
+                  style: TextStyle(color: Colors.green[900], fontSize: 16),
+                ),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.pop(ctx),
-                    child: const Text("OK"),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      backgroundColor: Colors.green[700],
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 10,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: const Text(
+                      "OK",
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
                   ),
                 ],
               ),
@@ -651,8 +715,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         icon: const Icon(Icons.cloud_upload),
         label: const Text("Sync Data to Cloud"),
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppTheme.goldenOrange,
-          padding: const EdgeInsets.symmetric(vertical: 14),
+          backgroundColor: Colors.orange[800],
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 2,
         ),
       ),
     );
