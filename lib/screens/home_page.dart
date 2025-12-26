@@ -11,6 +11,7 @@ import '../services/sync_service.dart';
 import 'add_cow_page.dart';
 import 'report_page.dart';
 import 'update_cow_page.dart';
+import 'cow_metrics_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -592,34 +593,34 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       children: [
         Expanded(
           child: _buildFooterBtn(
-            "Weekly Report",
-            Icons.calendar_view_week,
+            "Reports",
+            Icons.bar_chart,
             () => Navigator.push(
               context,
-              MaterialPageRoute(
-                builder: (context) => const ReportPage(isWeekly: true),
-              ),
+              MaterialPageRoute(builder: (context) => const ReportPage()),
             ),
+            Colors.green[700]!,
           ),
         ),
         const SizedBox(width: 16),
         Expanded(
           child: _buildFooterBtn(
-            "Monthly Report",
-            Icons.calendar_month,
-            () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const ReportPage(isWeekly: false),
-              ),
-            ),
+            "Cow Metrics",
+            Icons.insights,
+            _showCowMetricsDialog, // Triggers the Scan/Manual Dialog
+            Colors.purple[700]!,
           ),
         ),
       ],
     );
   }
 
-  Widget _buildFooterBtn(String label, IconData icon, VoidCallback onTap) {
+  Widget _buildFooterBtn(
+    String label,
+    IconData icon,
+    VoidCallback onTap,
+    Color color,
+  ) {
     return ElevatedButton.icon(
       onPressed: onTap,
       icon: Icon(icon, size: 18),
@@ -723,6 +724,242 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           ),
           elevation: 2,
         ),
+      ),
+    );
+  }
+
+  void _showCowMetricsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Cow Metrics"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text("How do you want to find the cow?"),
+              const SizedBox(height: 20),
+              // Option 1: SCAN
+              ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _startScanForMetrics(); // Re-use scan logic or navigate
+                },
+                icon: const Icon(Icons.qr_code_scanner),
+                label: const Text("Scan RFID Tag"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green[700],
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 50),
+                ),
+              ),
+              const SizedBox(height: 10),
+              // Option 2: MANUAL
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _showManualEntryDialog();
+                },
+                icon: const Icon(Icons.keyboard),
+                label: const Text("Enter ID Manually"),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 50),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // 1. UPDATED MANUAL ENTRY DIALOG (Asks for CowID)
+  void _showManualEntryDialog() {
+    TextEditingController idController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Enter Cow ID"), // Changed from RFID
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              "Enter the short Cow ID (e.g. 1, 5, 12)",
+              style: TextStyle(fontSize: 14, color: Colors.grey),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: idController,
+              keyboardType: TextInputType.number,
+              // Limit input to numbers only
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: "e.g. 5",
+                prefixIcon: Icon(Icons.tag),
+              ),
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("CANCEL"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              if (idController.text.isNotEmpty) {
+                // Parse the text to an Integer
+                int? id = int.tryParse(idController.text);
+                if (id != null) {
+                  _navigateToMetricsById(id); // Call new ID function
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text("Please enter a valid number"),
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text("SEARCH"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 2. NEW NAVIGATION FUNCTION (For CowID)
+  void _navigateToMetricsById(int id) async {
+    // Uses getCowById (Integer) instead of getCowByRFID (String)
+    final cow = await DatabaseHelper.instance.getCowById(id);
+
+    if (cow != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => CowMetricsPage(cowData: cow)),
+      );
+    } else {
+      _showError("Cow ID #$id not found.");
+    }
+  }
+
+  // Reuse logic to find cow and open Metrics Page
+  void _startScanForMetrics() {
+    // Navigate to a temporary scan page (UpdateCowScanPage logic can be reused or just a new simple one)
+    // For simplicity, let's use a dialog listener here or navigate to a specialized scan page
+    // Since we already have UpdateCowScanPage, we can create a similar "MetricsScanPage"
+    // OR just use a simple listening dialog here.
+
+    // Let's use the simple dialog listener approach for "Scan"
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const _ScanListenerDialog(),
+    ).then((rfid) {
+      if (rfid != null && rfid is String && rfid.isNotEmpty) {
+        _navigateToMetrics(rfid);
+      }
+    });
+  }
+
+  void _navigateToMetrics(String rfid) async {
+    final cow = await DatabaseHelper.instance.getCowByRFID(rfid);
+    if (cow != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => CowMetricsPage(cowData: cow)),
+      );
+    } else {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Cow Not Found!")));
+    }
+  }
+}
+
+// --- MISSING DIALOG CLASS ---
+class _ScanListenerDialog extends StatefulWidget {
+  const _ScanListenerDialog();
+
+  @override
+  State<_ScanListenerDialog> createState() => _ScanListenerDialogState();
+}
+
+class _ScanListenerDialogState extends State<_ScanListenerDialog> {
+  final FocusNode _focusNode = FocusNode();
+  String _buffer = "";
+
+  @override
+  void initState() {
+    super.initState();
+    // Automatically request focus so the scanner input is captured immediately
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _handleKey(KeyEvent event) {
+    if (event is KeyDownEvent) {
+      if (event.logicalKey == LogicalKeyboardKey.enter) {
+        // Scanner sends ENTER at the end of the tag
+        if (_buffer.isNotEmpty) {
+          Navigator.pop(context, _buffer); // Return the RFID to the parent
+        }
+      } else if (event.character != null) {
+        // Collect numeric characters
+        if (RegExp(r'[0-9]').hasMatch(event.character!)) {
+          setState(() {
+            _buffer += event.character!;
+          });
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return KeyboardListener(
+      focusNode: _focusNode,
+      autofocus: true,
+      onKeyEvent: _handleKey,
+      child: AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: const Text("Scan RFID Tag"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.qr_code_scanner, size: 60, color: Colors.green),
+            const SizedBox(height: 20),
+            const Text(
+              "Please scan the cow's tag now...",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _buffer.isEmpty ? "Waiting..." : "Reading: $_buffer",
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context), // Cancel and return null
+            child: const Text("CANCEL", style: TextStyle(color: Colors.red)),
+          ),
+        ],
       ),
     );
   }

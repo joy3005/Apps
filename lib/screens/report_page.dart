@@ -5,9 +5,7 @@ import 'package:jeyam_dairy/theme.dart';
 import 'package:intl/intl.dart';
 
 class ReportPage extends StatefulWidget {
-  final bool isWeekly; // true = 7 days, false = 30 days
-
-  const ReportPage({super.key, required this.isWeekly});
+  const ReportPage({super.key});
 
   @override
   State<ReportPage> createState() => _ReportPageState();
@@ -17,11 +15,12 @@ class _ReportPageState extends State<ReportPage> {
   List<Map<String, dynamic>> _data = [];
   bool _isLoading = true;
 
-  // Aggregate Data
+  // Toggle State: 7 Days vs 30 Days
+  int _selectedDays = 7;
+
   double _totalMorning = 0;
   double _totalEvening = 0;
 
-  // THEME COLORS
   final Color _morningColor = Colors.orange;
   final Color _eveningColor = Colors.blue;
 
@@ -32,13 +31,13 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Future<void> _fetchData() async {
-    int days = widget.isWeekly ? 7 : 30;
-    final rawData = await DatabaseHelper.instance.getMilkDataForReport(days);
+    setState(() => _isLoading = true);
+    final rawData = await DatabaseHelper.instance.getMilkDataForReport(
+      _selectedDays,
+    );
 
     double tM = 0;
     double tE = 0;
-
-    // Aggregate totals
     for (var row in rawData) {
       tM += row['MorningMilk'] ?? 0;
       tE += row['EveningMilk'] ?? 0;
@@ -54,39 +53,74 @@ class _ReportPageState extends State<ReportPage> {
 
   @override
   Widget build(BuildContext context) {
-    String title = widget.isWeekly
-        ? "Weekly Report (7 Days)"
-        : "Monthly Report (30 Days)";
-
     return Scaffold(
-      // 1. FARM THEME BACKGROUND
       backgroundColor: Colors.green[50],
       appBar: AppBar(
-        title: Text(title),
-        // 2. FARM THEME APP BAR
+        title: const Text("Production Reports"),
         backgroundColor: Colors.green[800],
         foregroundColor: Colors.white,
         centerTitle: true,
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            // 1. TOGGLE BUTTONS (Weekly / Monthly)
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.green[200]!),
+              ),
+              child: Row(
                 children: [
-                  // 1. PIE CHART SECTION
-                  _buildChartCard("Production Share", _buildPieChart()),
-
-                  const SizedBox(height: 20),
-
-                  // 2. BAR CHART SECTION
-                  _buildChartCard(
-                    "Daily Performance (Side-by-Side)",
-                    _buildBarChart(),
-                  ),
+                  _buildToggleOption("Weekly (7 Days)", 7),
+                  Container(width: 1, height: 40, color: Colors.green[200]),
+                  _buildToggleOption("Monthly (30 Days)", 30),
                 ],
               ),
             ),
+            const SizedBox(height: 20),
+
+            if (_isLoading)
+              const Center(child: CircularProgressIndicator())
+            else ...[
+              _buildChartCard("Production Share", _buildPieChart()),
+              const SizedBox(height: 20),
+              _buildChartCard("Daily Performance", _buildBarChart()),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildToggleOption(String label, int days) {
+    bool isSelected = _selectedDays == days;
+    return Expanded(
+      child: InkWell(
+        onTap: () {
+          if (!isSelected) {
+            setState(() => _selectedDays = days);
+            _fetchData();
+          }
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.green[100] : Colors.transparent,
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: isSelected ? Colors.green[900] : Colors.grey[600],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -103,12 +137,10 @@ class _ReportPageState extends State<ReportPage> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                // 3. FARM THEME TEXT
                 color: Colors.green[800],
               ),
             ),
             const SizedBox(height: 10),
-            // LEGEND FOR CLARITY
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -139,18 +171,16 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  // --- PIE CHART LOGIC ---
   Widget _buildPieChart() {
     if (_totalMorning == 0 && _totalEvening == 0)
       return const Center(child: Text("No Data"));
-
     return PieChart(
       PieChartData(
         sections: [
           PieChartSectionData(
             value: _totalMorning,
             title: "${_totalMorning.toStringAsFixed(1)} L",
-            color: _morningColor, // Orange
+            color: _morningColor,
             radius: 50,
             titleStyle: const TextStyle(
               fontWeight: FontWeight.bold,
@@ -160,7 +190,7 @@ class _ReportPageState extends State<ReportPage> {
           PieChartSectionData(
             value: _totalEvening,
             title: "${_totalEvening.toStringAsFixed(1)} L",
-            color: _eveningColor, // Blue
+            color: _eveningColor,
             radius: 60,
             titleStyle: const TextStyle(
               fontWeight: FontWeight.bold,
@@ -174,45 +204,37 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  // --- BAR CHART LOGIC ---
   Widget _buildBarChart() {
     if (_data.isEmpty) return const Center(child: Text("No Data"));
-
     Map<String, Map<String, double>> grouped = {};
-
     for (var row in _data) {
       String date = row['Date'];
-      if (!grouped.containsKey(date)) {
+      if (!grouped.containsKey(date))
         grouped[date] = {'morning': 0.0, 'evening': 0.0};
-      }
-      if (row['Time'] == 'Morning') {
+      if (row['Time'] == 'Morning')
         grouped[date]!['morning'] =
             (grouped[date]!['morning'] ?? 0) + (row['MorningMilk'] ?? 0);
-      } else {
+      else
         grouped[date]!['evening'] =
             (grouped[date]!['evening'] ?? 0) + (row['EveningMilk'] ?? 0);
-      }
     }
 
     List<BarChartGroupData> barGroups = [];
     int index = 0;
-
     grouped.forEach((date, values) {
       barGroups.add(
         BarChartGroupData(
           x: index,
           barRods: [
-            // Morning Bar
             BarChartRodData(
               toY: values['morning']!,
-              color: _morningColor, // Orange
+              color: _morningColor,
               width: 12,
               borderRadius: BorderRadius.circular(4),
             ),
-            // Evening Bar
             BarChartRodData(
               toY: values['evening']!,
-              color: _eveningColor, // Blue
+              color: _eveningColor,
               width: 12,
               borderRadius: BorderRadius.circular(4),
             ),
