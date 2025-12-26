@@ -37,12 +37,14 @@ class DatabaseHelper {
     ''');
 
     // 2. Milking Data Table
+    // Note: We don't have a unique constraint on (CowID, Date, Time) in the schema,
+    // so we handle the uniqueness logic in the Dart code below.
     await db.execute('''
     CREATE TABLE Milking (
       MilkingID INTEGER PRIMARY KEY AUTOINCREMENT,
       CowID INTEGER NOT NULL,
       Date TEXT NOT NULL, 
-      Time TEXT NOT NULL, -- Added Time to track Morning vs Evening exactly
+      Time TEXT NOT NULL, 
       CycleNumber INTEGER NOT NULL,
       MorningMilk REAL DEFAULT 0,
       EveningMilk REAL DEFAULT 0,
@@ -61,7 +63,7 @@ class DatabaseHelper {
     return await db.insert('Cows', row);
   }
 
-  // Find Cow by RFID (Used by Home Page Listener)
+  // Find Cow by RFID
   Future<Map<String, dynamic>?> getCowByRFID(String rfid) async {
     final db = await instance.database;
     final maps = await db.query('Cows', where: 'RFID = ?', whereArgs: [rfid]);
@@ -69,43 +71,49 @@ class DatabaseHelper {
     return null;
   }
 
-  // Save Milk Record
+  // --- CRITICAL UPDATE: LOGIC TO PREVENT DUPLICATES ---
   Future<int> insertMilkRecord(Map<String, dynamic> row) async {
     final db = await instance.database;
-    return await db.insert('Milking', row);
+
+    // 1. CHECK IF RECORD EXISTS
+    // We look for a row with the same CowID, Date, and Time (Morning/Evening)
+    final existingRows = await db.query(
+      'Milking',
+      where: 'CowID = ? AND Date = ? AND Time = ?',
+      whereArgs: [row['CowID'], row['Date'], row['Time']],
+    );
+
+    if (existingRows.isNotEmpty) {
+      // 2. UPDATE EXISTING RECORD
+      // If found, we update the weight (overwrite the old value)
+      // We also reset 'IsSynced' to 0 so the updated value gets sent to the cloud.
+      final id = existingRows.first['MilkingID'];
+
+      return await db.update(
+        'Milking',
+        row, // The new data overwrites the old data
+        where: 'MilkingID = ?',
+        whereArgs: [id],
+      );
+    } else {
+      // 3. INSERT NEW RECORD
+      // If not found, create a fresh entry
+      return await db.insert('Milking', row);
+    }
   }
 
   // Get Weekly Data for Graphs
   Future<List<Map<String, dynamic>>> getWeeklyData() async {
     final db = await instance.database;
-    // Simple query to get last 7 entries
     return await db.rawQuery(
       'SELECT * FROM Milking ORDER BY Date DESC LIMIT 7',
     );
   }
 
-  // Check if cow was already milked this session (Morning/Evening)
-  Future<bool> isCowMilkedToday(int cowID, String date, String session) async {
-    final db = await instance.database;
-    // We define "Session" based on time, but for now let's assume
-    // we pass 'Morning' or 'Evening' to check logic later.
-    // Simpler rule: Check if entry exists for this Cow + Date + Time(Morning/Evening)
-    // Note: Our table stores 'Time' as string. Let's strict check that.
-
-    final result = await db.query(
-      'Milking',
-      where: 'CowID = ? AND Date = ? AND Time = ?',
-      whereArgs: [cowID, date, session],
-    );
-    return result.isNotEmpty;
-  }
-
   // --- REPORTING QUERIES ---
 
-  // Get data for the last X days (7 or 30)
   Future<List<Map<String, dynamic>>> getMilkDataForReport(int days) async {
     final db = await instance.database;
-    // Get date X days ago
     final dateThreshold = DateTime.now().subtract(Duration(days: days));
     final dateStr = dateThreshold.toIso8601String().substring(0, 10);
 
@@ -113,7 +121,7 @@ class DatabaseHelper {
       'Milking',
       where: 'Date >= ?',
       whereArgs: [dateStr],
-      orderBy: 'Date ASC', // Oldest first for the Bar Chart
+      orderBy: 'Date ASC',
     );
   }
 

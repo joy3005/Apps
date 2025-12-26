@@ -1,9 +1,9 @@
-import 'dart:io'; // Needed for File handling
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:image_picker/image_picker.dart'; // New Package
-import 'package:path_provider/path_provider.dart'; // To save locally
-import 'package:path/path.dart' as syspath; // To manage file names
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as syspath;
 import '../database_helper.dart';
 import '../theme.dart';
 
@@ -17,7 +17,6 @@ class AddCowPage extends StatefulWidget {
 class _AddCowPageState extends State<AddCowPage> {
   final _formKey = GlobalKey<FormState>();
 
-  // Controllers
   final TextEditingController _rfidController = TextEditingController();
   final TextEditingController _purchaseDateController = TextEditingController();
   final TextEditingController _calfBirthDateController =
@@ -25,8 +24,7 @@ class _AddCowPageState extends State<AddCowPage> {
   final TextEditingController _injectionDateController =
       TextEditingController();
 
-  // State Variables
-  File? _storedImage; // Holds the image file locally
+  File? _storedImage;
   int? _selectedBirthYear;
   int? _selectedAge;
   int? _milkCycle;
@@ -40,9 +38,7 @@ class _AddCowPageState extends State<AddCowPage> {
     _calfBirthDateController.text = today;
   }
 
-  // --- IMAGE PICKER LOGIC ---
   Future<void> _takePicture() async {
-    // Show dialog to choose Camera or Gallery
     showModalBottomSheet(
       context: context,
       builder: (ctx) => Container(
@@ -84,37 +80,36 @@ class _AddCowPageState extends State<AddCowPage> {
 
   Future<void> _processImage(ImageSource source) async {
     final picker = ImagePicker();
-    final imageFile = await picker.pickImage(
-      source: source,
-      maxWidth: 600, // Optimize size
-    );
-
+    final imageFile = await picker.pickImage(source: source, maxWidth: 600);
     if (imageFile == null) return;
-
-    // 1. Update UI immediately
-    setState(() {
-      _storedImage = File(imageFile.path);
-    });
-
-    // 2. Save permanent copy to App Documents
+    setState(() => _storedImage = File(imageFile.path));
     final appDir = await getApplicationDocumentsDirectory();
     final fileName = syspath.basename(imageFile.path);
     final savedImage = await File(
       imageFile.path,
     ).copy('${appDir.path}/$fileName');
-
-    // 3. Update the stored file reference to the PERMANENT path
-    setState(() {
-      _storedImage = savedImage;
-    });
+    setState(() => _storedImage = savedImage);
   }
 
-  // --- SAVE LOGIC ---
   void _saveCow() async {
     if (_formKey.currentState!.validate()) {
+      // 1. VALIDATE MANDATORY DROPDOWNS
+      // The database requires these fields (NOT NULL), so we must ensure they are selected.
       if (_selectedBirthYear == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please select Birth Year')),
+        );
+        return;
+      }
+      if (_milkCycle == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select Lactation Cycle')),
+        );
+        return;
+      }
+      if (_currentStage == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select Current Stage')),
         );
         return;
       }
@@ -127,7 +122,6 @@ class _AddCowPageState extends State<AddCowPage> {
         'CurrentStage': _currentStage,
         'CalfBirthDate': _calfBirthDateController.text,
         'LastInjectionDate': _injectionDateController.text,
-        // SAVE THE PATH (String), not the file itself
         'CowPicturePath': _storedImage?.path ?? '',
       };
 
@@ -135,23 +129,36 @@ class _AddCowPageState extends State<AddCowPage> {
         await DatabaseHelper.instance.addCow(row);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Cow Added Successfully!')),
+            const SnackBar(
+              content: Text('Cow Added Successfully!'),
+              backgroundColor: Colors.green,
+            ),
           );
           Navigator.pop(context);
         }
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Error: RFID ${_rfidController.text} already exists!',
+        // 2. SMARTER ERROR HANDLING
+        // Only say "RFID exists" if it's actually a UNIQUE constraint error.
+        String errorMessage;
+        if (e.toString().contains("UNIQUE constraint failed")) {
+          errorMessage = 'Error: RFID ${_rfidController.text} already exists!';
+        } else {
+          // Show the actual error (e.g., "NOT NULL constraint failed")
+          errorMessage = 'Database Error: $e';
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(errorMessage),
+              backgroundColor: Colors.redAccent,
             ),
-          ),
-        );
+          );
+        }
       }
     }
   }
 
-  // --- UI HELPERS ---
   Future<void> _selectDate(TextEditingController controller) async {
     DateTime? picked = await showDatePicker(
       context: context,
@@ -159,42 +166,42 @@ class _AddCowPageState extends State<AddCowPage> {
       firstDate: DateTime(2010),
       lastDate: DateTime(2030),
     );
-    if (picked != null) {
-      setState(() {
-        controller.text = DateFormat('yyyy-MM-dd').format(picked);
-      });
-    }
+    if (picked != null)
+      setState(() => controller.text = DateFormat('yyyy-MM-dd').format(picked));
   }
 
   void _onBirthYearChanged(int? year) {
-    if (year != null) {
+    if (year != null)
       setState(() {
         _selectedBirthYear = year;
         _selectedAge = DateTime.now().year - year;
       });
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Add New Cow")),
+      backgroundColor: Colors.green[50], // Farm Background
+      appBar: AppBar(
+        title: const Text("Add New Cow"),
+        backgroundColor: Colors.green[800],
+        foregroundColor: Colors.white,
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Form(
           key: _formKey,
           child: Column(
             children: [
-              // 1. IMAGE PICKER SECTION
               GestureDetector(
                 onTap: _takePicture,
                 child: Container(
                   width: 150,
                   height: 150,
                   decoration: BoxDecoration(
-                    color: Colors.grey[200],
+                    color: Colors.white,
                     shape: BoxShape.circle,
-                    border: Border.all(color: AppTheme.emeraldGreen, width: 2),
+                    border: Border.all(color: Colors.green[700]!, width: 2),
                     image: _storedImage != null
                         ? DecorationImage(
                             image: FileImage(_storedImage!),
@@ -222,7 +229,6 @@ class _AddCowPageState extends State<AddCowPage> {
               ),
               const SizedBox(height: 20),
 
-              // 2. RFID Section
               _buildCard(
                 title: "Cow Identity",
                 child: TextFormField(
@@ -237,7 +243,6 @@ class _AddCowPageState extends State<AddCowPage> {
                 ),
               ),
 
-              // 3. Dates & Age
               _buildCard(
                 title: "Lifecycle Details",
                 child: Column(
@@ -297,7 +302,6 @@ class _AddCowPageState extends State<AddCowPage> {
                 ),
               ),
 
-              // 4. Status
               _buildCard(
                 title: "Production Status",
                 child: Column(
@@ -335,8 +339,6 @@ class _AddCowPageState extends State<AddCowPage> {
               ),
 
               const SizedBox(height: 25),
-
-              // 5. Buttons
               Row(
                 children: [
                   Expanded(
@@ -344,6 +346,8 @@ class _AddCowPageState extends State<AddCowPage> {
                       onPressed: () => Navigator.pop(context),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 16),
+                        foregroundColor: Colors.green[800],
+                        side: BorderSide(color: Colors.green[800]!),
                       ),
                       child: const Text("CANCEL"),
                     ),
@@ -353,7 +357,7 @@ class _AddCowPageState extends State<AddCowPage> {
                     child: ElevatedButton(
                       onPressed: _saveCow,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.emeraldGreen,
+                        backgroundColor: Colors.green[700],
                         padding: const EdgeInsets.symmetric(vertical: 16),
                       ),
                       child: const Text("SUBMIT"),
@@ -370,6 +374,8 @@ class _AddCowPageState extends State<AddCowPage> {
 
   Widget _buildCard({required String title, required Widget child}) {
     return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -377,13 +383,13 @@ class _AddCowPageState extends State<AddCowPage> {
           children: [
             Text(
               title,
-              style: const TextStyle(
-                color: AppTheme.emeraldGreen,
+              style: TextStyle(
+                color: Colors.green[800],
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
               ),
             ),
-            const Divider(),
+            Divider(color: Colors.green[200]),
             const SizedBox(height: 10),
             child,
           ],
