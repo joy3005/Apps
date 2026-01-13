@@ -12,6 +12,7 @@ import 'add_cow_page.dart';
 import 'report_page.dart';
 import 'update_cow_page.dart';
 import 'cow_metrics_page.dart';
+import '../mock_data_seeder.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -328,6 +329,46 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           elevation: 0,
           backgroundColor: Colors.green[800],
           foregroundColor: Colors.white,
+          // ADD THIS ACTIONS BLOCK
+          actions: [
+            PopupMenuButton<String>(
+              onSelected: (value) async {
+                if (value == 'seed') {
+                  _showLoading();
+                  await MockDataSeeder.seedDatabase();
+                  Navigator.pop(context); // Close loading
+                  _showSuccess("Added 20 Cows & 3 Months Data");
+                } else if (value == 'clear') {
+                  await MockDataSeeder.clearDatabase();
+                  _showSuccess("Database Cleared");
+                }
+              },
+              itemBuilder: (BuildContext context) {
+                return [
+                  const PopupMenuItem(
+                    value: 'seed',
+                    child: Row(
+                      children: [
+                        Icon(Icons.science, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Text("Generate Test Data"),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'clear',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_forever, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text("Clear All Data"),
+                      ],
+                    ),
+                  ),
+                ];
+              },
+            ),
+          ],
         ),
         body: SafeArea(
           child: Padding(
@@ -877,6 +918,21 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         context,
       ).showSnackBar(const SnackBar(content: Text("Cow Not Found!")));
     }
+  }
+
+  // Test Data Code - To Be Removed
+  void _showLoading() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(child: CircularProgressIndicator()),
+    );
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.green),
+    );
   }
 }
 

@@ -214,8 +214,7 @@ class DatabaseHelper {
       [cowID],
     );
 
-    // B. DRY DAYS HISTORY (Calculated from Gaps in Milking)
-    // Logic: Find Last Date of Cycle N and First Date of Cycle N+1
+    // B. DRY DAYS HISTORY
     List<Map<String, dynamic>> dryDaysData = [];
     final cycleDates = await db.rawQuery(
       '''
@@ -226,22 +225,18 @@ class DatabaseHelper {
     );
 
     for (int i = 0; i < cycleDates.length - 1; i++) {
-      // Compare Cycle 1 EndDate to Cycle 2 StartDate
       DateTime endCurr = DateTime.parse(cycleDates[i]['EndDate'] as String);
       DateTime startNext = DateTime.parse(
         cycleDates[i + 1]['StartDate'] as String,
       );
       int gap = startNext.difference(endCurr).inDays;
-
-      // "Cycle 2" dry days corresponds to the gap BEFORE Cycle 2 started
       dryDaysData.add({
         "x": cycleDates[i + 1]['CycleNumber'],
         "y": gap.toDouble(),
       });
     }
 
-    // C. GESTATION HISTORY (From Events Table)
-    // We look for pairs of "Injection" and "Birth" in the same cycle
+    // C. GESTATION & INJECTION COUNTS
     List<Map<String, dynamic>> gestationData = [];
     final events = await db.query(
       'Cow_Events',
@@ -250,20 +245,38 @@ class DatabaseHelper {
       whereArgs: [cowID],
     );
 
-    // Group by Cycle
     Map<int, Map<String, String>> cycleEvents = {};
+    Map<int, int> cycleInjectionCounts = {}; // Store count per cycle
+
     for (var e in events) {
       int c = e['CycleNumber'] as int;
+      String type = e['EventType'] as String;
+
+      // Track Dates
       if (!cycleEvents.containsKey(c)) cycleEvents[c] = {};
-      cycleEvents[c]![e['EventType'] as String] = e['EventDate'] as String;
+      cycleEvents[c]![type] = e['EventDate'] as String;
+
+      // Count Injections
+      if (type == 'Injection') {
+        cycleInjectionCounts[c] = (cycleInjectionCounts[c] ?? 0) + 1;
+      }
     }
 
     cycleEvents.forEach((cycle, dates) {
       if (dates.containsKey('Injection') && dates.containsKey('Birth')) {
-        DateTime inj = DateTime.parse(dates['Injection']!);
+        DateTime inj = DateTime.parse(
+          dates['Injection']!,
+        ); // First/Last injection logic depends on sorting, usually last successful
+        // Ideally, we compare the SUCCESSFUL injection. For this demo, we assume the last logic or simple diff.
+        // Let's use the date recorded.
         DateTime birth = DateTime.parse(dates['Birth']!);
         int days = birth.difference(inj).inDays;
-        gestationData.add({"x": cycle, "y": days.toDouble()});
+
+        gestationData.add({
+          "x": cycle,
+          "y": days.toDouble(),
+          "meta": cycleInjectionCounts[cycle] ?? 1, // <--- PASS COUNT HERE
+        });
       }
     });
 

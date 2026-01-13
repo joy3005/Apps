@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:fl_chart/fl_chart.dart'; // Ensure this is in pubspec.yaml
+import 'package:fl_chart/fl_chart.dart';
 import 'package:jeyam_dairy/database_helper.dart';
 
 class CowMetricsPage extends StatefulWidget {
@@ -13,7 +13,7 @@ class CowMetricsPage extends StatefulWidget {
 
 class _CowMetricsPageState extends State<CowMetricsPage> {
   Map<String, dynamic>? _metrics;
-  Map<String, List<Map<String, dynamic>>>? _graphData; // Stores history data
+  Map<String, List<Map<String, dynamic>>>? _graphData;
   bool _isLoading = true;
 
   @override
@@ -70,7 +70,7 @@ class _CowMetricsPageState extends State<CowMetricsPage> {
                   _buildCurrentCycleGrid(),
                   const SizedBox(height: 20),
 
-                  // 3. HISTORY GRAPHS (EXPANDABLE)
+                  // 3. HISTORY GRAPHS
                   _buildSectionTitle("Historical Analysis"),
                   const SizedBox(height: 10),
 
@@ -90,12 +90,13 @@ class _CowMetricsPageState extends State<CowMetricsPage> {
                     "Days",
                   ),
 
-                  // C. GESTATION
+                  // C. GESTATION (With Static Injection Labels)
                   _buildGraphTile(
                     "Gestation Period (Injection to Birth)",
                     _graphData!['gestation']!,
                     Colors.purple,
                     "Days",
+                    showInjectionLabels: true, // <--- ENABLE STATIC LABELS
                   ),
                 ],
               ),
@@ -109,8 +110,9 @@ class _CowMetricsPageState extends State<CowMetricsPage> {
     String title,
     List<Map<String, dynamic>> data,
     Color color,
-    String unit,
-  ) {
+    String unit, {
+    bool showInjectionLabels = false,
+  }) {
     return Card(
       elevation: 2,
       margin: const EdgeInsets.only(bottom: 12),
@@ -127,15 +129,26 @@ class _CowMetricsPageState extends State<CowMetricsPage> {
         children: [
           Container(
             height: 250,
-            padding: const EdgeInsets.fromLTRB(16, 24, 24, 16),
+            padding: const EdgeInsets.fromLTRB(16, 32, 24, 16),
             child: data.isEmpty
                 ? const Center(child: Text("Not enough data history."))
                 : BarChart(
                     BarChartData(
                       alignment: BarChartAlignment.spaceAround,
-                      maxY: _getMaxY(data) * 1.2, // Add 20% headroom
+                      // Add extra headroom if labels are shown on top
+                      maxY: _getMaxY(data) * (showInjectionLabels ? 1 : 1),
+
                       barTouchData: BarTouchData(
+                        // Disable touch for Gestation graph (since we show labels statically)
+                        // enabled: !showInjectionLabels,
+                        enabled: true,
                         touchTooltipData: BarTouchTooltipData(
+                          tooltipHorizontalAlignment:
+                              FLHorizontalAlignment.right,
+
+                          // 2. PREVENT CLIPPING (Keeps it visible if bar is too tall)
+                          fitInsideVertically: true,
+                          fitInsideHorizontally: true,
                           getTooltipColor: (group) => Colors.blueGrey,
                           getTooltipItem: (group, groupIndex, rod, rodIndex) {
                             return BarTooltipItem(
@@ -148,8 +161,42 @@ class _CowMetricsPageState extends State<CowMetricsPage> {
                           },
                         ),
                       ),
+
                       titlesData: FlTitlesData(
                         show: true,
+                        // 1. TOP TITLES (used for Injection Labels)
+                        topTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles:
+                                showInjectionLabels, // Only show if enabled
+                            reservedSize: 20,
+                            getTitlesWidget: (value, meta) {
+                              if (!showInjectionLabels) return const SizedBox();
+
+                              // Find the data point for this Cycle (x-value)
+                              int cycleNum = value.toInt();
+                              var match = data.firstWhere(
+                                (e) => e['x'] == cycleNum,
+                                orElse: () => <String, dynamic>{},
+                              );
+
+                              if (match.isEmpty || !match.containsKey('meta')) {
+                                return const SizedBox();
+                              }
+
+                              int count = match['meta'];
+                              return Text(
+                                "$count Inj",
+                                style: TextStyle(
+                                  color: color,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        // 2. BOTTOM TITLES (Cycle Number)
                         bottomTitles: AxisTitles(
                           sideTitles: SideTitles(
                             showTitles: true,
@@ -167,6 +214,7 @@ class _CowMetricsPageState extends State<CowMetricsPage> {
                             },
                           ),
                         ),
+                        // 3. LEFT TITLES (Values)
                         leftTitles: AxisTitles(
                           sideTitles: SideTitles(
                             showTitles: true,
@@ -177,15 +225,13 @@ class _CowMetricsPageState extends State<CowMetricsPage> {
                             ),
                           ),
                         ),
-                        topTitles: AxisTitles(
-                          sideTitles: SideTitles(showTitles: false),
-                        ),
                         rightTitles: AxisTitles(
                           sideTitles: SideTitles(showTitles: false),
                         ),
                       ),
                       gridData: FlGridData(show: true, drawVerticalLine: false),
                       borderData: FlBorderData(show: false),
+                      // BUILD BARS
                       barGroups: data.map((point) {
                         return BarChartGroupData(
                           x: point['x'] as int,
@@ -220,7 +266,8 @@ class _CowMetricsPageState extends State<CowMetricsPage> {
     return max;
   }
 
-  // --- (Reused Code from Previous Version) ---
+  // --- HEADER & GRID WIDGETS (UNCHANGED) ---
+
   Widget _buildCowHeader(String? path, String rfid) {
     bool hasImage = path != null && path.isNotEmpty && File(path).existsSync();
     return Center(
